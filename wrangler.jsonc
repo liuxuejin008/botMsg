@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "botmsg",
+  "main": "src/index.tsx",
+  "compatibility_date": "2026-04-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "assets": { "directory": "./public" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "botmsg",
+      "database_id": "e645d2a6-f2ac-4100-8898-01a1d27169af",
+      "migrations_dir": "migrations/d1"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "AVATARS",
+      "bucket_name": "images"
+    }
+  ],
+  "vars": {
+    "PUBLIC_BASE_URL": "https://botmsg.YOUR_SUBDOMAIN.workers.dev",
+    "JWT_EXPIRES_HOURS": "24"
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  }
+  // Secrets (wrangler secret put): SECRET_KEY, JWT_SECRET
+}

@@ -1,5 +1,18 @@
 # BotMsg — webhook inbox on Cloudflare Workers
 
+BotMsg是一个运行在服务端，例如Cloudflare的webhook服务器，可以用来接受其他系统的消息，比如其他系统的webhook信息，
+1.处理 QQ、微信、企微、公众号、飞书、Telegram、Discord、Slack、钉钉等各类即时通信消息
+2.监听 Gmail 邮件推送通知
+3.基于 Telegram Bot API 接收消息更新，触发自动化流程。
+4.监听 GitHub 仓库事件（如 push、issue、PR）并触发工作流
+5.vercel的webhook
+等等场景，目标是做一个给Agent使用的统一消息中心。
+
+BotMsg是server端，BotMsgClient是客户端。客户端要跑在普通的PC上，和BotMsg是server的连接。
+
+当Botmsg收到信息的时候，BotMsgClient通过长连接或者轮训给接受消息，BotMsgClient再调用本地的类似Dify，N8N的webhook地址，这样Dify，N8N这些跑在本地机器但是没有公网IP的程序就可以收到外部信息，而且安全性也更好，而且BotMsg能保存信息，保证信息不会丢。
+
+
 A Telegram-style bot host: a **public URL** receives HTTP webhooks, stores payloads in **D1** (SQLite); a **local client** polls with JWT to fetch unread messages. Avatars stored in **R2**. The entire stack runs on Cloudflare's free tier (100,000 requests/day).
 
 ## Architecture
