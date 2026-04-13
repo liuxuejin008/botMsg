@@ -21,7 +21,7 @@
     }
   ],
   "vars": {
-    "PUBLIC_BASE_URL": "https://botmsg.YOUR_SUBDOMAIN.workers.dev",
+    "PUBLIC_BASE_URL": "https://botmsg.chatlog.dev",
     "JWT_EXPIRES_HOURS": "24"
   },
   "triggers": {
