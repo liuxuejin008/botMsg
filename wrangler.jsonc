@@ -24,8 +24,44 @@
     "PUBLIC_BASE_URL": "https://botmsg.chatlog.dev",
     "JWT_EXPIRES_HOURS": "24"
   },
+  "kv_namespaces": [
+    {
+      "binding": "SSE_CONNECTIONS",
+      "id": "4f5788497bb04491acb623cbbbbfe735"
+    }
+  ],
+  // ── Cloudflare Queues ─────────────────────────────────────────
+  "queues": {
+    "producers": [
+      {
+        "queue": "botmsg-sandbox",
+        "binding": "SANDBOX_QUEUE"
+      },
+      {
+        "queue": "botmsg-proxy-notify",
+        "binding": "PROXY_QUEUE"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "botmsg-sandbox",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "botmsg-dlq",
+        "max_concurrency": 2
+      },
+      {
+        "queue": "botmsg-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 30,
+        "max_retries": 0
+      }
+    ]
+  },
+  // Cron: 仅做过期数据清理（重试已由 Queue 托管）
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["0 * * * *"]
   }
   // Secrets (wrangler secret put): SECRET_KEY, JWT_SECRET
 }

@@ -10,7 +10,9 @@ import forwards from "./routes/forwards";
 import members from "./routes/members";
 import stats from "./routes/stats";
 import ui from "./routes/ui";
-import { retryPendingForwards, cleanupTimedOutProxyRequests } from "./lib/forwarder";
+import { cleanupTimedOutProxyRequests } from "./lib/forwarder";
+import { handleSandboxQueue, handleDLQ } from "./queue-consumer";
+import type { Env, SandboxQueueMessage } from "./types";
 
 const app = new Hono<AppEnv>();
 
@@ -46,12 +48,26 @@ app.get("/avatars/:key", async (c) => {
 // UI (server-rendered JSX)
 app.route("/", ui);
 
-async function scheduled(_event: ScheduledEvent, env: AppEnv["Bindings"]): Promise<void> {
-  await retryPendingForwards(env.DB);
+// ── Cron: 仅做过期数据清理（重试已由 Queue 托管）───────────────────
+async function scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
   await cleanupTimedOutProxyRequests(env.DB);
 }
 
 export default {
   fetch: app.fetch,
   scheduled,
+
+  // ── Queue Consumer ────────────────────────────────────────────
+  async queue(batch: MessageBatch<SandboxQueueMessage>, env: Env): Promise<void> {
+    switch (batch.queue) {
+      case "botmsg-sandbox":
+        await handleSandboxQueue(batch, env);
+        break;
+      case "botmsg-dlq":
+        await handleDLQ(batch, env);
+        break;
+      default:
+        console.warn(`[Queue] Unknown queue: ${batch.queue}`);
+    }
+  },
 };

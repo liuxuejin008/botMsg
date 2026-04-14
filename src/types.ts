@@ -5,6 +5,12 @@ export type Env = {
   JWT_SECRET: string;
   PUBLIC_BASE_URL: string;
   JWT_EXPIRES_HOURS: string;
+  /** Cloudflare Queue: Sandbox 模式异步转发 */
+  SANDBOX_QUEUE: Queue;
+  /** Cloudflare Queue: Proxy 模式新请求通知 */
+  PROXY_QUEUE: Queue;
+  /** KV: 用于 SSE 单实例互斥锁防多 Client 共同接收导致重复投递 */
+  SSE_CONNECTIONS: KVNamespace;
 };
 
 export type AppVars = {
@@ -98,10 +104,21 @@ export type ProxyRequestRow = {
   payload_json: string;
   headers_json: string | null;
   source_ip: string | null;
-  status: "pending" | "completed" | "timeout";
+  status: "pending" | "processing" | "completed" | "timeout";
   response_body: string | null;
   response_status: number;
   response_headers_json: string | null;
   created_at: string;
   completed_at: string | null;
 };
+
+// ── Queue 消息体类型 ────────────────────────────────────────────
+
+/** Sandbox Queue: 异步转发消息 */
+export type SandboxQueueMessage = {
+  messageId: number;
+  channelId: number;
+};
+
+/** DLQ: 终态失败消息 (由平台自动转入，body 与原始 Queue 消息一致) */
+export type DLQMessage = SandboxQueueMessage;

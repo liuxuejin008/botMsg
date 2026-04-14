@@ -44,6 +44,12 @@ stream.get("/channels/:id/messages/stream", async (c) => {
   const db = c.env.DB;
   const channelMode = ch.mode;
 
+  // 生成连接 ID 与抢占锁
+  // 使用 KV 实现 "新连接踢弃旧连接"，防止同一 Channel 开启多个 SSE 客户端导致重复消费
+  const connectionId = crypto.randomUUID();
+  const lockKey = `channel:${channelId}:sse_owner`;
+  await c.env.SSE_CONNECTIONS.put(lockKey, connectionId, { expirationTtl: 60 });
+
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
   const enc = new TextEncoder();
@@ -53,10 +59,23 @@ stream.get("/channels/:id/messages/stream", async (c) => {
   const loop = async () => {
     const deadline = Date.now() + 24_000;
     const POLL_MS = channelMode === "proxy" ? 1000 : 2000;
+    let lastLockCheck = Date.now();
 
     try {
       while (Date.now() < deadline) {
         let emitted = false;
+
+        // 锁校验与续租 (每 10秒 校验一次，因为通常连接只持续 24秒)
+        if (Date.now() - lastLockCheck >= 10_000) {
+          const currentOwner = await c.env.SSE_CONNECTIONS.get(lockKey);
+          if (currentOwner !== connectionId) {
+            // 被此频道的更新近的连接覆盖（踢下线）
+            await write(`event: conflict\ndata: {"message":"terminated_by_new_connection"}\n\n`);
+            break;
+          }
+          await c.env.SSE_CONNECTIONS.put(lockKey, connectionId, { expirationTtl: 60 });
+          lastLockCheck = Date.now();
+        }
 
         // Sandbox messages
         if (channelMode === "sandbox") {
@@ -91,32 +110,44 @@ stream.get("/channels/:id/messages/stream", async (c) => {
           }
         }
 
-        // Proxy requests
+        // Proxy requests — 原子抢占，防止多 SSE 连接重复推送
         if (channelMode === "proxy") {
           const { results: proxyResults } = await db
             .prepare(
-              `SELECT * FROM proxy_requests
+              `SELECT id FROM proxy_requests
                WHERE channel_id = ? AND id > ? AND status = 'pending'
                ORDER BY id LIMIT 10`
             )
             .bind(channelId, proxySince)
-            .all<ProxyRequestRow>();
+            .all<{ id: number }>();
 
           if (proxyResults.length > 0) {
-            for (const pr of proxyResults) {
+            for (const { id: prId } of proxyResults) {
+              // 原子标记为 processing，只有成功 RETURNING 的才推送
+              const claimed = await db
+                .prepare(
+                  `UPDATE proxy_requests SET status = 'processing'
+                   WHERE id = ? AND status = 'pending'
+                   RETURNING *`
+                )
+                .bind(prId)
+                .first<ProxyRequestRow>();
+
+              if (!claimed) continue; // 已被其他连接抢占，跳过
+
               try {
                 const data = JSON.stringify({
-                  request_id: pr.id,
-                  channel_id: pr.channel_id,
-                  payload: JSON.parse(pr.payload_json),
-                  headers: pr.headers_json ? JSON.parse(pr.headers_json) : null,
-                  source_ip: pr.source_ip,
-                  created_at: pr.created_at,
+                  request_id: claimed.id,
+                  channel_id: claimed.channel_id,
+                  payload: JSON.parse(claimed.payload_json),
+                  headers: claimed.headers_json ? JSON.parse(claimed.headers_json) : null,
+                  source_ip: claimed.source_ip,
+                  created_at: claimed.created_at,
                 });
-                await write(`id: p${pr.id}\nevent: proxy_request\ndata: ${data}\n\n`);
+                await write(`id: p${claimed.id}\nevent: proxy_request\ndata: ${data}\n\n`);
               } catch {
                 // Corrupted record — advance cursor and skip
-                await write(`id: p${pr.id}\nevent: skip\ndata: {"id":${pr.id}}\n\n`);
+                await write(`id: p${claimed.id}\nevent: skip\ndata: {"id":${claimed.id}}\n\n`);
               }
             }
             proxySince = proxyResults[proxyResults.length - 1].id;
@@ -169,7 +200,7 @@ stream.post("/channels/:id/proxy-response/:requestId", async (c) => {
   if (!ch) return c.json({ error: "not_found" }, 404);
 
   const pr = await c.env.DB.prepare(
-    "SELECT * FROM proxy_requests WHERE id = ? AND channel_id = ? AND status = 'pending'"
+    "SELECT * FROM proxy_requests WHERE id = ? AND channel_id = ? AND status IN ('pending', 'processing')"
   )
     .bind(requestId, channelId)
     .first<ProxyRequestRow>();

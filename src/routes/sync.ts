@@ -15,26 +15,21 @@ sync.get("/channels/:id/messages/pull", async (c) => {
   const ch = await checkChannelAccess(c.env.DB, channelId, userId, "member");
   if (!ch) return c.json({ error: "not_found" }, 404);
 
+  const now = new Date().toISOString();
+
+  // 原子级批量拉取消息，防止并发拉取拿到相同数据的竞态条件
   const { results: messages } = await c.env.DB.prepare(
-    `SELECT * FROM messages
-     WHERE channel_id = ? AND read_at IS NULL
-     ORDER BY id LIMIT ?`
+    `UPDATE messages
+     SET read_at = ?
+     WHERE id IN (
+       SELECT id FROM messages
+       WHERE channel_id = ? AND read_at IS NULL
+       ORDER BY id LIMIT ?
+     )
+     RETURNING *`
   )
-    .bind(channelId, limit)
+    .bind(now, channelId, limit)
     .all<MessageRow>();
-
-  if (messages.length > 0) {
-    const now = new Date().toISOString();
-    const ids = messages.map((m) => m.id);
-    const placeholders = ids.map(() => "?").join(",");
-    await c.env.DB.prepare(
-      `UPDATE messages SET read_at = ? WHERE id IN (${placeholders})`
-    )
-      .bind(now, ...ids)
-      .run();
-
-    for (const m of messages) m.read_at = now;
-  }
 
   return c.json({
     messages: messages.map((m) => ({
