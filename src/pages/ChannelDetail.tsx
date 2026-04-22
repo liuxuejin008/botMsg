@@ -57,14 +57,25 @@ export const ChannelDetailPage: FC<Props> = ({
         <input id="webhook-url" class="mono-input" type="text" readonly value={webhookUrl} aria-label="Webhook URL" />
         <button type="button" class="btn" id="copy-btn">复制</button>
       </div>
+      {channel.mode === "email" && channel.email_prefix && (
+        <div class="copy-row" style="margin-top:12px;">
+          <input id="email-url" class="mono-input" type="text" readonly value={`${channel.email_prefix}@chatlog.dev`} aria-label="Email Address" />
+          <button type="button" class="btn" id="copy-email-btn">复制</button>
+        </div>
+      )}
       {channel.mode === "proxy" && (
         <p class="ds-muted ds-small" style="margin-top:8px;">
           Proxy 模式：外部请求将透传至本地 client，等待响应后返回给调用方。超时 25 秒返回 504。
         </p>
       )}
-      {channel.mode === "sandbox" && (
+      {channel.mode === "sendbox" && (
         <p class="ds-muted ds-small" style="margin-top:8px;">
-          Sandbox 模式：消息存入数据库，立即返回 <code>{channel.sandbox_response}</code>，再异步投递给 client。
+          Sendbox 模式：消息存入数据库，立即返回 <code>{channel.sendbox_response}</code>，再异步投递给 client。
+        </p>
+      )}
+      {channel.mode === "email" && (
+        <p class="ds-muted ds-small" style="margin-top:8px;">
+          Email 模式：直接向专属邮箱发送邮件即可触发 Webhook，系统会自动解析邮件结构并异步投递。
         </p>
       )}
     </section>
@@ -131,14 +142,18 @@ export const ChannelDetailPage: FC<Props> = ({
           <input type="text" name="name" value={channel.name} maxlength={128} required />
         </label>
         <label>模式
-          <select name="mode">
-            <option value="sandbox" selected={channel.mode === "sandbox"}>Sandbox</option>
+          <select id="settings-mode-select" name="mode">
+            <option value="sendbox" selected={channel.mode === "sendbox"}>Sendbox</option>
             <option value="proxy" selected={channel.mode === "proxy"}>Proxy</option>
+            <option value="email" selected={channel.mode === "email"}>Email</option>
           </select>
         </label>
-        {channel.mode === "sandbox" && (
-          <label>Sandbox 响应 (JSON)
-            <input type="text" name="sandbox_response" value={channel.sandbox_response} />
+        <label id="settings-email-prefix" style={{ display: channel.mode === "email" ? "block" : "none" }}>自定义邮箱前缀 (Email 模式专用)
+          <input type="text" name="email_prefix" value={channel.email_prefix || ""} placeholder="例如：yhinhex" maxlength={64} pattern="^[a-z0-9_-]+$" title="只能包含小写字母、数字、下划线和连字符" />
+        </label>
+        {channel.mode === "sendbox" && (
+          <label>Sendbox 响应 (JSON)
+            <input type="text" name="sendbox_response" value={channel.sendbox_response} />
           </label>
         )}
         <button type="submit" class="btn primary">保存</button>
@@ -219,6 +234,14 @@ export const ChannelDetailPage: FC<Props> = ({
       </details>
     </section>
 
+    <section class="panel" aria-labelledby="logs-link-title">
+      <h2 class="ds-panel-title" id="logs-link-title">更多操作</h2>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;">
+        <a class="btn" href={`/channels/${channel.id}/logs`}>转发记录</a>
+        <a class="btn" href={`/channels/${channel.id}/members`}>成员管理</a>
+      </div>
+    </section>
+
     <section class="panel" aria-labelledby="consume-title">
       <h2 class="ds-panel-title" id="consume-title">消费未读队列</h2>
       <p class="ds-muted ds-small">
@@ -273,7 +296,31 @@ export const ChannelDetailPage: FC<Props> = ({
     </section>
 
     <script dangerouslySetInnerHTML={{
-      __html: `(function(){var btn=document.getElementById('copy-btn'),input=document.getElementById('webhook-url');if(!btn||!input)return;btn.addEventListener('click',function(){input.select();input.setSelectionRange(0,99999);var url=input.value;if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(url).then(function(){btn.textContent='已复制';setTimeout(function(){btn.textContent='复制';},1500);}).catch(function(){document.execCommand('copy');});}else{document.execCommand('copy');}});})();`
+      __html: `(function(){
+        function setupCopy(btnId, inputId) {
+          var btn=document.getElementById(btnId),input=document.getElementById(inputId);
+          if(!btn||!input)return;
+          btn.addEventListener('click',function(){
+            input.select();input.setSelectionRange(0,99999);
+            var url=input.value;
+            if(navigator.clipboard&&navigator.clipboard.writeText){
+              navigator.clipboard.writeText(url).then(function(){
+                btn.textContent='已复制';setTimeout(function(){btn.textContent='复制';},1500);
+              }).catch(function(){document.execCommand('copy');});
+            }else{document.execCommand('copy');}
+          });
+        }
+        setupCopy('copy-btn', 'webhook-url');
+        setupCopy('copy-email-btn', 'email-url');
+        
+        var modeSelect = document.getElementById('settings-mode-select');
+        var emailPrefixLabel = document.getElementById('settings-email-prefix');
+        if (modeSelect && emailPrefixLabel) {
+          modeSelect.addEventListener('change', function(e) {
+            emailPrefixLabel.style.display = e.target.value === 'email' ? 'block' : 'none';
+          });
+        }
+      })();`
     }} />
   </Layout>
 );

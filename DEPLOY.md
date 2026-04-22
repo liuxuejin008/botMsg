@@ -664,11 +664,18 @@ npx wrangler rollback
 | `/api/bots/:id` | PATCH | Bearer JWT | 更新名称/头像 URL |
 | `/api/bots/:id/avatar` | POST | Bearer JWT | 上传头像 (multipart) |
 
-### Webhook
+### Webhook & Email Webhook
 
 | 端点 | 方法 | 认证 | 说明 |
 |------|------|------|------|
-| `/w/:secret` | POST | 无 (secret in URL) | 接收 webhook 消息 |
+| `/w/:secret` | POST | 无 (secret in URL) | 接收普通 HTTP webhook 消息 |
+| `[secret]@your-domain.com` | Email | 无 (secret in Email) | 接收并解析邮件 Webhook (通过 Cloudflare Email Routing) |
+
+#### Email Webhook (邮件转发) 设置指南：
+1. **绑定域名**：在 Cloudflare Dashboard 中将你的域名 DNS 托管在 Cloudflare。
+2. **启用 Email Routing**：进入你的域名 -> Email -> Email Routing。
+3. **配置 Catch-all 规则**：在 Email Routing 中设置 Catch-all address（或指定地址），将 Action 设置为 "Send to a Worker"，Destination 选择 `botmsg`。
+4. **原理与使用**：现在，向 `<webhook_secret>@your-domain.com` 发送任何邮件，BotMsg Worker 都会自动捕获、解析（包含标题、正文文本和 HTML 内容），并以零延迟内部投递到对应的频道，实现 100% 免费、稳定且无缝的邮件聚合功能。
 
 ### 消息
 
@@ -692,6 +699,10 @@ npx wrangler rollback
 # 本地开发
 npm run dev
 
+# 首次部署：初始化 Cloudflare 资源
+# 该脚本会自动创建 D1, R2, KV 和 Queues
+./init-cloudflare.sh
+
 # 部署到生产
 npm run deploy
 
@@ -703,8 +714,9 @@ npx wrangler secret put SECRET_KEY
 npx wrangler secret put JWT_SECRET
 
 # 数据库操作
-npx wrangler d1 execute botmsg --remote --command="SELECT ..."
-npx wrangler d1 execute botmsg --remote --file=migrations/d1/XXXX.sql
+npx wrangler d1 execute botmsg --remote --file=migrations/d1/0001_users.sql
+npx wrangler d1 execute botmsg --remote --file=migrations/d1/0002_bots.sql
+npx wrangler d1 execute botmsg --remote --file=migrations/d1/0003_channels.sql
 npx wrangler d1 export botmsg --remote --output=backup.sql
 
 # R2 操作

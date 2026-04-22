@@ -26,12 +26,25 @@ export const DashboardPage: FC<Props> = ({ email, cards, flashes }) => (
       <p class="ds-muted ds-small">创建后将获得唯一 Webhook 路径，可向该 URL 发送 POST。</p>
       <form method="post" action="/dashboard" class="inline-create" style="margin-top:16px;">
         <input type="text" name="name" placeholder="名称，例如 Alerts" maxlength={128} required aria-label="频道名称" />
-        <select name="mode" aria-label="频道模式" style="margin-left:8px;">
-          <option value="sandbox">Sandbox</option>
+        <select id="create-mode-select" name="mode" aria-label="频道模式" style="margin-left:8px;">
+          <option value="sendbox">Sendbox</option>
           <option value="proxy">Proxy</option>
+          <option value="email">Email</option>
         </select>
-        <button type="submit" class="btn primary">创建</button>
+        <input id="create-email-prefix" type="text" name="email_prefix" placeholder="邮箱前缀 (可选)" maxlength={64} aria-label="邮箱前缀" style="display:none; margin-left:8px; width:160px;" pattern="^[a-z0-9_-]+$" title="只能包含小写字母、数字、下划线和连字符" />
+        <button type="submit" class="btn primary" style="margin-left:8px;">创建</button>
       </form>
+      <script dangerouslySetInnerHTML={{ __html: `
+        document.getElementById('create-mode-select').addEventListener('change', function(e) {
+          var prefix = document.getElementById('create-email-prefix');
+          if (e.target.value === 'email') {
+            prefix.style.display = 'inline-block';
+          } else {
+            prefix.style.display = 'none';
+            prefix.value = '';
+          }
+        });
+      `}} />
     </section>
 
     {cards.length === 0 ? (

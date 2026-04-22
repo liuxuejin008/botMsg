@@ -1,4 +1,4 @@
--- BotMsg: rename bot -> channel, add proxy/sandbox modes
+-- BotMsg: rename bot -> channel, add proxy/sendbox modes
 -- Fresh schema rebuild (development only; drops all existing data)
 
 DROP TABLE IF EXISTS forward_log;
@@ -15,16 +15,16 @@ CREATE TABLE IF NOT EXISTS channels (
   name            TEXT    NOT NULL,
   avatar_url      TEXT,
   webhook_secret  TEXT    NOT NULL UNIQUE,
-  -- 'sandbox' | 'proxy'
-  mode            TEXT    NOT NULL DEFAULT 'sandbox',
-  -- JSON body returned to webhook caller in sandbox mode
-  sandbox_response TEXT   NOT NULL DEFAULT '{"ok":true}',
+  -- 'sendbox' | 'proxy'
+  mode            TEXT    NOT NULL DEFAULT 'sendbox',
+  -- JSON body returned to webhook caller in sendbox mode
+  sendbox_response TEXT   NOT NULL DEFAULT '{"ok":true}',
   created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_channels_owner  ON channels(owner_user_id);
 CREATE INDEX IF NOT EXISTS idx_channels_secret ON channels(webhook_secret);
 
--- Messages (sandbox mode only)
+-- Messages (sendbox mode only)
 CREATE TABLE IF NOT EXISTS messages (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_id   INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS channel_rules (
 );
 CREATE INDEX IF NOT EXISTS idx_channel_rules ON channel_rules(channel_id, priority);
 
--- Forwarding targets per channel (sandbox mode)
+-- Forwarding targets per channel (sendbox mode)
 CREATE TABLE IF NOT EXISTS channel_forwards (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   channel_id         INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,

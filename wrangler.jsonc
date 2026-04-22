@@ -34,8 +34,8 @@
   "queues": {
     "producers": [
       {
-        "queue": "botmsg-sandbox",
-        "binding": "SANDBOX_QUEUE"
+        "queue": "botmsg-sendbox",
+        "binding": "SENDBOX_QUEUE"
       },
       {
         "queue": "botmsg-proxy-notify",
@@ -44,7 +44,7 @@
     ],
     "consumers": [
       {
-        "queue": "botmsg-sandbox",
+        "queue": "botmsg-sendbox",
         "max_batch_size": 10,
         "max_batch_timeout": 5,
         "max_retries": 5,

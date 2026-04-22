@@ -11,7 +11,7 @@ ChannelClient (本文件，内网端)
     · 主动向 ChannelServer 发起 SSE 长连接（规避防火墙入站拦截）
     · 解析 SSE 事件流，将事件重构为本地 HTTP 请求
     · Proxy 模式：将 ChannelReceiver 的响应回传给 ChannelServer，完成同步透传
-    · Sandbox 模式：收到消息后异步转发到 ChannelReceiver，无需等待
+    · Sendbox 模式：收到消息后异步转发到 ChannelReceiver，无需等待
 
 ChannelReceiver (本地业务端)
     运行在内网，处理具体业务逻辑（支付回调、告警、自动化等）。
@@ -23,13 +23,14 @@ proxy:
     外部 → ChannelServer（挂起请求）→ SSE → ChannelClient → ChannelReceiver
     → ChannelClient 回传结果 → ChannelServer 结束挂起 → 外部收到响应
 
-sandbox:
+sendbox:
     外部 → ChannelServer（保存消息，立即返回配置的静态响应）→ SSE →
     ChannelClient → ChannelReceiver（异步，无需等待）
 """
 from __future__ import annotations
 
 import asyncio
+import argparse
 import json
 import logging
 import os
@@ -67,13 +68,14 @@ class Config:
     sync_interval: int = 60
 
     @classmethod
-    def from_env(cls) -> "Config":
-        load_dotenv(Path(__file__).resolve().parent / ".env")
+    def from_env(cls, env_file: str | None = None, server_override: str | None = None) -> "Config":
+        env_path = Path(env_file).resolve() if env_file else Path(__file__).resolve().parent / ".env"
+        load_dotenv(env_path)
 
         def _get(key: str, default: str = "") -> str:
             return (os.getenv(key) or default).strip()
 
-        server_url = _get("CHANNEL_SERVER_URL").rstrip("/")
+        server_url = (server_override or _get("CHANNEL_SERVER_URL")).rstrip("/")
         email      = _get("CHANNEL_EMAIL")
         password   = _get("CHANNEL_PASSWORD")
 
@@ -145,8 +147,8 @@ class ChannelServerAPI:
         resp.raise_for_status()
         return resp.json()["forwards"]
 
-    async def ack_sandbox_message(self, channel_id: int) -> None:
-        """Sandbox 模式：将最早一条未读消息标为已读。"""
+    async def ack_sendbox_message(self, channel_id: int) -> None:
+        """Sendbox 模式：将最早一条未读消息标为已读。"""
         await self.http.get(
             f"{self.cfg.server_url}/api/channels/{channel_id}/messages/pull",
             params={"limit": "1"},
@@ -338,16 +340,16 @@ class ChannelClient:
     - 主动向 ChannelServer 建立 SSE 长连接
     - 解析 proxy_request / message 两类事件
     - Proxy 模式：收到事件 → 调用 ChannelReceiver → 回传结果给 ChannelServer
-    - Sandbox 模式：收到事件 → 调用 ChannelReceiver（异步，无需等待结果回传）
+    - Sendbox 模式：收到事件 → 调用 ChannelReceiver（异步，无需等待结果回传）
     """
 
     def __init__(self, api: ChannelServerAPI, channel: dict) -> None:
         self.api = api
         self.channel_id: int = channel["id"]
         self.channel_name: str = channel["name"]
-        self.mode: str = channel.get("mode", "sandbox")
+        self.mode: str = channel.get("mode", "sendbox")
         # SSE 游标，用于断线重连后续取
-        self._since: int = 0          # sandbox message cursor
+        self._since: int = 0          # sendbox message cursor
         self._proxy_since: int = 0    # proxy request cursor
         # ChannelReceiver 地址列表（从 ChannelServer 同步）
         self._receivers: list[dict] = []
@@ -378,10 +380,10 @@ class ChannelClient:
         except Exception as exc:
             log.warning("[ChannelClient] 频道#%d 同步 ChannelReceiver 失败: %s", self.channel_id, exc)
 
-    # ── Sandbox 模式处理 ──────────────────────────────────────────────────────
+    # ── Sendbox 模式处理 ──────────────────────────────────────────────────────
 
-    async def _on_sandbox_message(self, message: dict) -> None:
-        """步骤2→3→4：收到 sandbox message 事件，转发至 ChannelReceiver。"""
+    async def _on_sendbox_message(self, message: dict) -> None:
+        """步骤2→3→4：收到 sendbox message 事件，转发至 ChannelReceiver。"""
         if not self._receivers:
             self.stats_fail += 1
             return
@@ -400,7 +402,7 @@ class ChannelClient:
 
         if all_ok:
             try:
-                await self.api.ack_sandbox_message(self.channel_id)
+                await self.api.ack_sendbox_message(self.channel_id)
                 log.info(
                     "[ChannelClient] 频道#%d 消息#%s 已标为已读",
                     self.channel_id, message.get("id"),
@@ -539,7 +541,7 @@ class ChannelClient:
                                     self._since = max(self._since, int(evt.id))
                                 except ValueError:
                                     pass
-                            await self._on_sandbox_message(msg)
+                            await self._on_sendbox_message(msg)
 
                         elif evt.event == "reconnect":
                             break
@@ -569,7 +571,12 @@ class ChannelClient:
 # ── 主入口 ────────────────────────────────────────────────────────────────────
 
 async def main() -> None:
-    cfg = Config.from_env()
+    parser = argparse.ArgumentParser(description="ChannelClient - Webhook 转发内网端")
+    parser.add_argument("-c", "--config", help="指定配置文件 (.env) 路径")
+    parser.add_argument("-s", "--server", help="指定服务端地址 (覆盖配置中的 CHANNEL_SERVER_URL)")
+    args = parser.parse_args()
+
+    cfg = Config.from_env(env_file=args.config, server_override=args.server)
     api = ChannelServerAPI(cfg)
     await api.login()
 
@@ -586,7 +593,7 @@ async def main() -> None:
         return
 
     names = ", ".join(
-        f'{ch["name"]} (#{ch["id"]}, {ch.get("mode", "sandbox")})'
+        f'{ch["name"]} (#{ch["id"]}, {ch.get("mode", "sendbox")})'
         for ch in channels
     )
     log.info("[ChannelClient] 监听 %d 个频道: %s", len(channels), names)

@@ -12,10 +12,11 @@ import { LoginPage } from "../pages/Login";
 import { RegisterPage } from "../pages/Register";
 import { DashboardPage } from "../pages/Dashboard";
 import { ChannelDetailPage } from "../pages/ChannelDetail";
-import type { AppEnv, UserRow, ChannelRow, ChannelForwardRow, ChannelMode, MessageRow } from "../types";
+import { ForwardLogsPage } from "../pages/ForwardLogs";
+import type { AppEnv, UserRow, ChannelRow, ChannelForwardRow, ChannelMode, MessageRow, ForwardLogRow } from "../types";
 
 const ALLOWED_AVATAR_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp"]);
-const VALID_MODES = new Set<ChannelMode>(["sandbox", "proxy"]);
+const VALID_MODES = new Set<ChannelMode>(["sendbox", "proxy", "email"]);
 
 const ui = new Hono<AppEnv>();
 
@@ -156,17 +157,23 @@ ui.post("/dashboard", async (c) => {
   if (!name) name = "My Channel";
   if (name.length > 128) name = name.slice(0, 128);
 
-  const modeInput = (form.get("mode") as string) ?? "sandbox";
-  const mode: ChannelMode = VALID_MODES.has(modeInput as ChannelMode) ? (modeInput as ChannelMode) : "sandbox";
+  const modeInput = (form.get("mode") as string) ?? "sendbox";
+  const mode: ChannelMode = VALID_MODES.has(modeInput as ChannelMode) ? (modeInput as ChannelMode) : "sendbox";
+
+  let emailPrefix: string | null = null;
+  const prefixInput = (form.get("email_prefix") as string)?.trim().toLowerCase();
+  if (prefixInput && /^[a-z0-9_-]{3,64}$/.test(prefixInput)) {
+    emailPrefix = prefixInput;
+  }
 
   const secret =
     crypto.randomUUID().replace(/-/g, "") +
     crypto.randomUUID().replace(/-/g, "");
 
   const row = await c.env.DB.prepare(
-    "INSERT INTO channels (owner_user_id, name, webhook_secret, mode) VALUES (?, ?, ?, ?) RETURNING id"
+    "INSERT INTO channels (owner_user_id, name, webhook_secret, email_prefix, mode) VALUES (?, ?, ?, ?, ?) RETURNING id"
   )
-    .bind(uid, name, secret.slice(0, 43), mode)
+    .bind(uid, name, secret.slice(0, 43), emailPrefix, mode)
     .first<{ id: number }>();
 
   return c.redirect(`/channels/${row!.id}`);
@@ -345,7 +352,8 @@ ui.post("/channels/:id/settings", async (c) => {
   const form = await c.req.formData();
   const name = ((form.get("name") as string) ?? "").trim();
   const modeInput = form.get("mode") as string;
-  const sandboxResponse = form.get("sandbox_response") as string;
+  const emailPrefixInput = form.get("email_prefix") as string | null;
+  const sendboxResponse = form.get("sendbox_response") as string;
 
   const updates: string[] = [];
   const params: unknown[] = [];
@@ -358,9 +366,19 @@ ui.post("/channels/:id/settings", async (c) => {
     updates.push("mode = ?");
     params.push(modeInput);
   }
-  if (sandboxResponse !== null && sandboxResponse !== undefined) {
-    updates.push("sandbox_response = ?");
-    params.push(sandboxResponse);
+  if (emailPrefixInput !== null && emailPrefixInput !== undefined) {
+    const p = emailPrefixInput.trim().toLowerCase();
+    if (p === "") {
+      updates.push("email_prefix = ?");
+      params.push(null);
+    } else if (/^[a-z0-9_-]{3,64}$/.test(p)) {
+      updates.push("email_prefix = ?");
+      params.push(p);
+    }
+  }
+  if (sendboxResponse !== null && sendboxResponse !== undefined) {
+    updates.push("sendbox_response = ?");
+    params.push(sendboxResponse);
   }
 
   if (updates.length > 0) {
@@ -441,6 +459,86 @@ ui.post("/channels/:id/consume", async (c) => {
   }
 
   return c.redirect(`/channels/${channelId}`);
+});
+
+// --- Forward logs (paginated, searchable) ---
+ui.get("/channels/:id/logs", async (c) => {
+  const guard = loginRequired(c);
+  if (guard) return guard;
+  const uid = getSessionUserId(c)!;
+  const channelId = parseInt(c.req.param("id"));
+  const email = (await getUserEmail(c.env.DB, uid))!;
+
+  const ch = await c.env.DB.prepare(
+    "SELECT * FROM channels WHERE id = ? AND owner_user_id = ?"
+  )
+    .bind(channelId, uid)
+    .first<ChannelRow>();
+  if (!ch) return c.redirect("/dashboard");
+
+  const page = Math.max(1, parseInt(c.req.query("page") ?? "1") || 1);
+  const pageSize = 20;
+  const offset = (page - 1) * pageSize;
+  const search = (c.req.query("search") ?? "").trim();
+
+  let baseQuery = `
+    SELECT fl.*,
+           m.payload_json AS message_payload,
+           cf.url AS forward_url
+    FROM forward_log fl
+    JOIN messages m ON m.id = fl.message_id
+    JOIN channel_forwards cf ON cf.id = fl.forward_id
+    WHERE m.channel_id = ?
+  `;
+  const params: unknown[] = [channelId];
+
+  if (search) {
+    baseQuery += ` AND (CAST(fl.message_id AS TEXT) LIKE ? OR cf.url LIKE ? OR fl.error LIKE ?)`;
+    const term = `%${search}%`;
+    params.push(term, term, term);
+  }
+
+  const countQuery = `SELECT COUNT(*) AS total FROM (${baseQuery})`;
+  const countRow = await c.env.DB.prepare(countQuery).bind(...params).first<{ total: number }>();
+  const total = countRow?.total ?? 0;
+
+  const dataQuery = `${baseQuery} ORDER BY fl.id DESC LIMIT ? OFFSET ?`;
+  const { results: rows } = await c.env.DB.prepare(dataQuery)
+    .bind(...params, pageSize, offset)
+    .all<ForwardLogRow & { message_payload: string | null; forward_url: string | null }>();
+
+  return c.html(
+    <ForwardLogsPage
+      email={email}
+      channel={ch}
+      logs={rows}
+      total={total}
+      page={page}
+      pageSize={pageSize}
+      search={search}
+    />
+  );
+});
+
+ui.post("/channels/:id/logs/:logId/delete", async (c) => {
+  const guard = loginRequired(c);
+  if (guard) return guard;
+  const uid = getSessionUserId(c)!;
+  const channelId = parseInt(c.req.param("id"));
+  const logId = parseInt(c.req.param("logId"));
+
+  const ch = await c.env.DB.prepare(
+    "SELECT id FROM channels WHERE id = ? AND owner_user_id = ?"
+  )
+    .bind(channelId, uid)
+    .first<ChannelRow>();
+  if (!ch) return c.redirect("/dashboard");
+
+  await c.env.DB.prepare("DELETE FROM forward_log WHERE id = ?")
+    .bind(logId)
+    .run();
+
+  return c.redirect(`/channels/${channelId}/logs`);
 });
 
 export default ui;

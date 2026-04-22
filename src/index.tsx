@@ -11,8 +11,9 @@ import members from "./routes/members";
 import stats from "./routes/stats";
 import ui from "./routes/ui";
 import { cleanupTimedOutProxyRequests } from "./lib/forwarder";
-import { handleSandboxQueue, handleDLQ } from "./queue-consumer";
-import type { Env, SandboxQueueMessage } from "./types";
+import { handleSendboxQueue, handleDLQ } from "./queue-consumer";
+import PostalMime from "postal-mime";
+import type { Env, SendboxQueueMessage } from "./types";
 
 const app = new Hono<AppEnv>();
 
@@ -58,16 +59,71 @@ export default {
   scheduled,
 
   // ── Queue Consumer ────────────────────────────────────────────
-  async queue(batch: MessageBatch<SandboxQueueMessage>, env: Env): Promise<void> {
+  async queue(batch: MessageBatch<SendboxQueueMessage>, env: Env): Promise<void> {
     switch (batch.queue) {
-      case "botmsg-sandbox":
-        await handleSandboxQueue(batch, env);
+      case "botmsg-sendbox":
+        await handleSendboxQueue(batch, env);
         break;
       case "botmsg-dlq":
         await handleDLQ(batch, env);
         break;
       default:
         console.warn(`[Queue] Unknown queue: ${batch.queue}`);
+    }
+  },
+
+  // ── Email Worker (Cloudflare Email Routing) ───────────────────
+  async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    try {
+      const rawEmail = await new Response(message.raw).arrayBuffer();
+      const parser = new PostalMime();
+      const parsedEmail = await parser.parse(rawEmail);
+
+      // Email address should be <webhook_secret>@your-domain.com
+      // Extract the secret from the local part of the recipient address
+      const toAddress = message.to;
+      const secret = toAddress.split("@")[0];
+
+      if (!secret) {
+        message.setReject("Invalid recipient address format.");
+        return;
+      }
+
+      const payload = {
+        from: message.from,
+        to: message.to,
+        subject: parsedEmail.subject,
+        text: parsedEmail.text,
+        html: parsedEmail.html,
+        date: parsedEmail.date,
+      };
+
+      // Construct an internal request to hit the existing webhook route
+      // We use `PUBLIC_BASE_URL` if configured, or just a dummy localhost URL
+      // since the routing handles it locally anyway.
+      const baseUrl = env.PUBLIC_BASE_URL || "http://localhost";
+      const webhookUrl = `${baseUrl}/w/${secret}`;
+
+      const req = new Request(webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // Adding a custom header to identify email routing
+          "X-BotMsg-Source": "Cloudflare-Email-Routing",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      // Pass the request directly into our Hono app instance for zero-latency local routing
+      const response = await app.fetch(req, env, ctx);
+
+      if (!response.ok) {
+        console.error(`Email webhook failed with status ${response.status}: ${await response.text()}`);
+        message.setReject(`Webhook endpoint rejected the message with status ${response.status}`);
+      }
+    } catch (err) {
+      console.error("Failed to parse or forward email:", err);
+      message.setReject("Internal server error during email processing.");
     }
   },
 };
