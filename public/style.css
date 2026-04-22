@@ -446,6 +446,7 @@ a.btn:hover {
 .stack-form input[type="password"],
 .stack-form input[type="number"],
 .stack-form input[type="file"],
+.stack-form select,
 .mono-input {
   width: 100%;
   margin-top: 8px;
@@ -467,6 +468,7 @@ a.btn:hover {
 }
 
 .stack-form input:hover,
+.stack-form select:hover,
 .mono-input:hover {
   box-shadow: var(--shadow-ring), var(--shadow-elev);
 }
@@ -485,7 +487,9 @@ a.btn:hover {
   align-items: center;
 }
 
-.inline-create input[type="text"] {
+.inline-create input[type="text"],
+.inline-create input[type="number"],
+.inline-create select {
   flex: 1;
   min-width: 200px;
   padding: 10px 12px;
@@ -498,7 +502,9 @@ a.btn:hover {
   color: var(--ds-black);
 }
 
-.inline-create input[type="text"]:hover {
+.inline-create input[type="text"]:hover,
+.inline-create input[type="number"]:hover,
+.inline-create select:hover {
   box-shadow: var(--shadow-ring), var(--shadow-elev);
 }
 
