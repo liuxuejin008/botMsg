@@ -1,6 +1,6 @@
-# BotMsg — webhook inbox on Cloudflare Workers
+# LinkedBot — webhook inbox on Cloudflare Workers
 
-BotMsg是一个运行在服务端，例如Cloudflare的webhook服务器，可以用来接受其他系统的消息，比如其他系统的webhook信息，
+LinkedBot是一个运行在服务端，例如Cloudflare的webhook服务器，可以用来接受其他系统的消息，比如其他系统的webhook信息，
 1.处理 QQ、微信、企微、公众号、飞书、Telegram、Discord、Slack、钉钉等各类即时通信消息
 2.监听 Gmail 邮件推送通知
 3.基于 Telegram Bot API 接收消息更新，触发自动化流程。
@@ -8,9 +8,9 @@ BotMsg是一个运行在服务端，例如Cloudflare的webhook服务器，可以
 5.vercel的webhook
 等等场景，目标是做一个给Agent使用的统一消息中心。
 
-BotMsg是server端，BotMsgClient是客户端。客户端要跑在普通的PC上，和BotMsg是server的连接。
+LinkedBot是server端，LinkedBotClient是客户端。客户端要跑在普通的PC上，和LinkedBot是server的连接。
 
-当Botmsg收到信息的时候，BotMsgClient通过长连接或者轮训给接受消息，BotMsgClient再调用本地的类似Dify，N8N的webhook地址，这样Dify，N8N这些跑在本地机器但是没有公网IP的程序就可以收到外部信息，而且安全性也更好，而且BotMsg能保存信息，保证信息不会丢。
+当Botmsg收到信息的时候，LinkedBotClient通过长连接或者轮训给接受消息，LinkedBotClient再调用本地的类似Dify，N8N的webhook地址，这样Dify，N8N这些跑在本地机器但是没有公网IP的程序就可以收到外部信息，而且安全性也更好，而且LinkedBot能保存信息，保证信息不会丢。
 
 
 A Telegram-style bot host: a **public URL** receives HTTP webhooks, stores payloads in **D1** (SQLite); a **local client** polls with JWT to fetch unread messages. Avatars stored in **R2**. The entire stack runs on Cloudflare's free tier (100,000 requests/day).
@@ -43,7 +43,7 @@ npm install
 2. Create a local D1 database and apply the schema:
 
 ```bash
-npx wrangler d1 execute botmsg --local --file=migrations/d1/0001_initial.sql
+npx wrangler d1 execute linkedbot --local --file=migrations/d1/0001_initial.sql
 ```
 
 3. Create a `.dev.vars` file with secrets for local dev:
@@ -66,7 +66,7 @@ Open `http://localhost:8787` to access the web UI. Register, create a bot, send 
 1. Create a D1 database:
 
 ```bash
-npx wrangler d1 create botmsg
+npx wrangler d1 create linkedbot
 ```
 
 Copy the `database_id` from the output into `wrangler.jsonc` under `d1_databases[0].database_id`.
@@ -74,13 +74,13 @@ Copy the `database_id` from the output into `wrangler.jsonc` under `d1_databases
 2. Create an R2 bucket:
 
 ```bash
-npx wrangler r2 bucket create botmsg-avatars
+npx wrangler r2 bucket create linkedbot-avatars
 ```
 
 3. Apply the D1 schema to production:
 
 ```bash
-npx wrangler d1 execute botmsg --remote --file=migrations/d1/0001_initial.sql
+npx wrangler d1 execute linkedbot --remote --file=migrations/d1/0001_initial.sql
 ```
 
 4. Set secrets:
@@ -90,7 +90,7 @@ npx wrangler secret put SECRET_KEY
 npx wrangler secret put JWT_SECRET
 ```
 
-5. Update `PUBLIC_BASE_URL` in `wrangler.jsonc` to your Worker's URL (e.g. `https://botmsg.<subdomain>.workers.dev`).
+5. Update `PUBLIC_BASE_URL` in `wrangler.jsonc` to your Worker's URL (e.g. `https://linkedbot.<subdomain>.workers.dev`).
 
 6. Deploy:
 
